@@ -4,7 +4,52 @@ import numpy as np
 from PIL import Image, ImageTk
 
 class RiemannianImageEditor:
+    """Главный класс редактора римановых изображений.
+    
+    Обеспечивает интерфейс для визуализации и редактирования изображений 
+    с учетом римановой метрики. Позволяет:
+    - Перемещаться по изображению с учетом метрики
+    - Изменять цвета пикселей
+    - Сохранять изменения
+    - Настраивать параметры отображения
+    
+    Attributes:
+        parent: Родительское окно Tkinter
+        window: Окно редактора
+        color_array: NumPy массив с цветами изображения
+        metric_array: NumPy массив с метрикой изображения
+        color_file_path: Путь к файлу с цветами
+        metric_file_path: Путь к файлу с метрикой
+        position: Текущая позиция просмотра
+        right_dir: Вектор направления вправо
+        up_dir: Вектор направления вверх
+        selected_color: Выбранный цвет для рисования (RGB)
+        computation_resolution: Разрешение вычислений
+        move_speed: Скорость перемещения
+        rotation_speed: Скорость вращения
+        scale_speed: Скорость масштабирования
+        integration_step: Шаг интегрирования
+        canvas_width: Ширина холста
+        canvas_height: Высота холста
+    """
+    
+    __slots__ = ("parent", "window", "color_array", "metric_array", "color_file_path", 
+                "metric_file_path", "position", "right_dir", "up_dir", "selected_color", 
+                "computation_resolution", "move_speed", "rotation_speed", "scale_speed", 
+                "integration_step", "canvas_width", "canvas_height", "canvas", 
+                "btn_choose_color", "btn_save", "resolution_scale", "integration_step_scale", 
+                "btn_close", "display_image", "tk_image")
+
     def __init__(self, parent, color_array, metric_array, color_file_path, metric_file_path):
+        """Инициализация редактора изображений.
+        
+        Args:
+            parent: Родительское окно Tkinter
+            color_array: NumPy массив с цветами изображения (H×W×3)
+            metric_array: NumPy массив с метрикой изображения (H×W×3)
+            color_file_path: Путь к файлу с цветами
+            metric_file_path: Путь к файлу с метрикой
+        """
         self.parent = parent
         self.window = tk.Toplevel(parent)
         self.window.title("Редактор рисунков")
@@ -21,7 +66,7 @@ class RiemannianImageEditor:
         self.up_dir = np.array([0.0, 20.0], dtype=np.float32)
         self.right_dir_from_up_dir()
         self.selected_color = (255, 0, 0)
-        self.computation_resolution = 0.2
+        self.computation_resolution = 36
         self.move_speed = 0.1
         self.rotation_speed = 0.1
         self.scale_speed = 0.1
@@ -31,6 +76,7 @@ class RiemannianImageEditor:
         self.create_widgets()
 
     def create_widgets(self):
+        """Создает интерфейс редактора (холст и элементы управления)."""
         # Холст для отображения
         self.canvas_width = 600
         self.canvas_height = 600
@@ -47,7 +93,7 @@ class RiemannianImageEditor:
         self.btn_save = tk.Button(control_frame, text="Сохранить изменения", command=self.save_changes)
         self.btn_save.pack(side=tk.LEFT, padx=5)
 
-        self.resolution_scale = tk.Scale(control_frame, from_=0.02, to=0.3, resolution=0.02, orient=tk.HORIZONTAL, command=self.choose_resolution)
+        self.resolution_scale = tk.Scale(control_frame, from_=8, to=64, resolution=1, orient=tk.HORIZONTAL, command=self.choose_resolution)
         self.resolution_scale.set(self.computation_resolution)
         self.resolution_scale.pack(side=tk.LEFT, padx=5)
 
@@ -70,8 +116,16 @@ class RiemannianImageEditor:
         self.redraw_canvas()
     
     def exponential_mapping(self, v):
-        vel0 = v[0]
-        vel1 = v[1]
+        """Вычисляет экспоненциальное отображение вектора в касательном пространстве.
+        
+        Args:
+            v: Вектор в касательном пространстве (NumPy array [x, y])
+            
+        Returns:
+            NumPy array: Координаты точки на изображении после экспоненциального отображения
+        """
+        vel0 = float(v[0])
+        vel1 = float(v[1])
 
         pos = self.position.copy()
 
@@ -133,6 +187,11 @@ class RiemannianImageEditor:
         return pos
     
     def on_key_press(self, event):
+        """Обработчик нажатий клавиш для управления редактором.
+        
+        Args:
+            event: Событие клавиатуры Tkinter
+        """
         if event.keysym.lower() == 'w':
             self.position = self.exponential_mapping(self.up_dir * (-self.move_speed))
         elif event.keysym.lower() == 's':
@@ -153,27 +212,69 @@ class RiemannianImageEditor:
         self.redraw_canvas()
 
     def update_position(self):
+        """Ограничивает позицию просмотра границами изображения."""
         if 0 > self.position[0]:
-            self.position[0] = 0
+            self.position[0] = 0.0
         elif self.position[0] >= self.metric_array.shape[0]:
-            self.position[0] = self.metric_array.shape[0] - 1
+            self.position[0] = float(self.metric_array.shape[0] - 1)
         
         if 0 > self.position[1]:
-            self.position[1] = 0
+            self.position[1] = 0.0
         elif self.position[1] >= self.metric_array.shape[1]:
-            self.position[1] = self.metric_array.shape[1] - 1
+            self.position[1] = float(self.metric_array.shape[1] - 1)
 
+    def get_l2_from_metric(self, x, y, g_x, g_xy, g_y):
+        """Вычисляет квадрат длины вектора по метрике.
+        
+        Args:
+            x: Координата x вектора
+            y: Координата y вектора
+            g_x: Компонента метрики g_11
+            g_xy: Компонента метрики g_12
+            g_y: Компонента метрики g_22
+            
+        Returns:
+            float: Квадрат длины вектора
+        """
+        return g_x * (x**2) + 2 * g_xy * x * y + g_y * (y**2)
+    
+    def get_metric(self, x0, y0, x1, y1, g_x, g_xy, g_y):
+        """Вычисляет значение метрики для двух векторов.
+        
+        Args:
+            x0, y0: Координаты первого вектора
+            x1, y1: Координаты второго вектора
+            g_x: Компонента метрики g_11
+            g_xy: Компонента метрики g_12
+            g_y: Компонента метрики g_22
+            
+        Returns:
+            float: Значение метрики
+        """
+        return g_x * x0 * x1 + g_xy * (x0 * y1 + x1 * y0) + g_y * y0 * y1
+    
+    def get_l2(self, x, y):
+        """Вычисляет квадрат длины вектора в текущей позиции.
+        
+        Args:
+            x: Координата x вектора
+            y: Координата y вектора
+            
+        Returns:
+            float: Квадрат длины вектора
+        """
+        g = self.metric_array[int(self.position[0]), int(self.position[1])]
+        return self.get_l2_from_metric(x, y, g[0], g[1], g[2])
     
     def right_dir_from_up_dir(self):
+        """Вычисляет ортогональное направление вправо из направления вверх."""
         self.update_position()
 
-        g_x = self.metric_array[int(self.position[0]), int(self.position[1])][0]
-        g_xy = self.metric_array[int(self.position[0]), int(self.position[1])][1]
-        g_y = self.metric_array[int(self.position[0]), int(self.position[1])][2]
+        g = self.metric_array[int(self.position[0]), int(self.position[1])]
 
-        g_right = g_x * (self.right_dir[0] ** 2) + 2 * g_xy * self.right_dir[0] * self.right_dir[1] + g_y * (self.right_dir[1] ** 2)
-        g_up = g_x * (self.up_dir[0] ** 2) + 2 * g_xy * self.up_dir[0] * self.up_dir[1] + g_y * (self.up_dir[1] ** 2)
-        g_right_up = g_x * self.right_dir[0] * self.up_dir[0] + g_xy * (self.right_dir[0] * self.up_dir[1] + self.right_dir[1] * self.up_dir[0]) + g_y * self.right_dir[1] * self.up_dir[1]
+        g_right = self.get_l2_from_metric(self.right_dir[0], self.right_dir[1], g[0], g[1], g[2])
+        g_up = self.get_l2_from_metric(self.up_dir[0], self.up_dir[1], g[0], g[1], g[2])
+        g_right_up = self.get_metric(self.up_dir[0], self.up_dir[1], self.right_dir[0], self.right_dir[1], g[0], g[1], g[2])
         g_new_right = g_right - (g_right_up ** 2) / g_up
 
         new_right_x = self.right_dir[0] - self.up_dir[0] * g_right_up / g_up
@@ -185,22 +286,29 @@ class RiemannianImageEditor:
         self.right_dir[1] = new_right_y * right_factor
 
     def rotate_directions(self, angle):
+        """Поворачивает направления просмотра на заданный угол.
+        
+        Args:
+            angle: Угол поворота в радианах
+        """
         cos_a = np.cos(angle)
         sin_a = np.sin(angle)
         
         new_x = self.up_dir[0]*cos_a + self.up_dir[1]*sin_a
         new_y = self.up_dir[1]*cos_a - self.up_dir[0]*sin_a
 
-        self.up_dir = np.array([new_x, new_y])
+        self.up_dir = np.array([new_x, new_y])*np.sqrt(self.get_l2(self.up_dir[0], self.up_dir[1])/self.get_l2(new_x, new_y))
 
         self.right_dir_from_up_dir()
 
     def choose_color(self):
+        """Открывает диалог выбора цвета для рисования."""
         color = colorchooser.askcolor(title="Выбор цвета")
         if color[0] is not None:
             self.selected_color = tuple(map(int, color[0]))
     
     def save_changes(self):
+        """Сохраняет изменения в файлы цветов и метрики."""
         if self.color_file_path and self.metric_file_path:
             try:
                 img = Image.fromarray(self.color_array)
@@ -216,30 +324,37 @@ class RiemannianImageEditor:
                 print("Ошибка сохранения изменений метрики:", e)
     
     def choose_resolution(self, value):
-        self.computation_resolution = float(value)
+        """Изменяет разрешение вычислений.
+        
+        Args:
+            value: Новое значение разрешения
+        """
+        self.computation_resolution = int(value)
         self.redraw_canvas()
     
     def choose_integration_step(self, value):
+        """Изменяет шаг интегрирования.
+        
+        Args:
+            value: Новое значение шага интегрирования
+        """
         self.integration_step = int(value)
         self.redraw_canvas()
     
     def redraw_canvas(self):
+        """Перерисовывает холст с текущими параметрами."""
         if not hasattr(self, 'canvas'):
             return
-
-        compute_width = int(self.canvas_width * self.computation_resolution)
-        compute_height = int(self.canvas_height * self.computation_resolution)
         
         # Создаем изображение для отображения
-        compute_img = np.zeros((compute_height, compute_width, 3), dtype=np.uint8)
+        compute_img = np.zeros((self.computation_resolution, self.computation_resolution, 3), dtype=np.uint8)
         
-        center_x = compute_width // 2
-        center_y = compute_height // 2
+        center = self.computation_resolution // 2
         
-        for y in range(compute_height):
-            for x in range(compute_width):
-                nx = (x - center_x) / float(compute_width)
-                ny = (y - center_y) / float(compute_height)
+        for y in range(self.computation_resolution):
+            for x in range(self.computation_resolution):
+                nx = (x - center) / float(self.computation_resolution)
+                ny = (y - center) / float(self.computation_resolution)
                 
                 # Вектор в касательном пространстве
                 v = self.right_dir * nx + self.up_dir * ny
@@ -256,8 +371,7 @@ class RiemannianImageEditor:
         
         # Преобразуем массив в изображение для tkinter
         self.display_image = Image.fromarray(compute_img)
-        if self.computation_resolution != 1.0:
-            self.display_image = self.display_image.resize((self.canvas_width, self.canvas_height), Image.Resampling.NEAREST)
+        self.display_image = self.display_image.resize((self.canvas_width, self.canvas_height), Image.Resampling.NEAREST)
         self.tk_image = ImageTk.PhotoImage(self.display_image)
         
         # Обновляем холст
@@ -265,6 +379,11 @@ class RiemannianImageEditor:
         self.canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_image)
     
     def on_canvas_drag(self, event):
+        """Обработчик перетаскивания мыши для рисования.
+        
+        Args:
+            event: Событие мыши Tkinter
+        """
         if event.widget != self.canvas:
             return
         
@@ -288,25 +407,49 @@ class RiemannianImageEditor:
             self.redraw_canvas()
     
     def on_mouse_wheel(self, event):
+        """Обработчик колеса мыши для масштабирования.
+        
+        Args:
+            event: Событие мыши Tkinter
+        """
         # Масштабирование при прокрутке колеса мыши
         if event.delta > 0:
-            self.right_dir *= (1+self.scale_speed)
             self.up_dir *= (1+self.scale_speed)
+            self.right_dir *= (1+self.scale_speed)
         else:
-            self.right_dir *= (1-self.scale_speed)
             self.up_dir *= (1-self.scale_speed)
+            self.right_dir *= (1-self.scale_speed)
         
         # Переотрисовка после движений
         self.redraw_canvas()
 
 
 class RiemannianImageEditorMainMenu:
+    """Главное меню редактора римановых изображений.
+    
+    Обеспечивает интерфейс для загрузки/создания изображений 
+    перед открытием основного редактора.
+    
+    Attributes:
+        root: Главное окно Tkinter
+        current_color_array: Загруженный массив цветов
+        current_metric_array: Загруженный массив метрики
+        current_color_file_path: Путь к файлу цветов
+        current_metric_file_path: Путь к файлу метрики
+    """
+    
     def __init__(self, root):
+        """Инициализация главного меню.
+        
+        Args:
+            root: Главное окно Tkinter
+        """
         self.root = root
         self.root.title("Выбор рисунков")
         self.create_widgets()
     
-    def create_widgets(self):        
+    def create_widgets(self):
+        """Создает интерфейс главного меню."""
         # Кнопки главного меню
         self.btn_load_color = tk.Button(self.root, text="Загрузить поле цветов(BMP)", command=self.load_color_bmp)
         self.btn_load_color.pack(pady=10)
@@ -327,6 +470,7 @@ class RiemannianImageEditorMainMenu:
         self.current_metric_file_path = None
     
     def load_color_bmp(self):
+        """Загружает файл с цветами изображения."""
         file_path = filedialog.askopenfilename(filetypes=[("BMP files", "*.bmp")])
         if file_path:
             self.current_color_file_path = file_path
@@ -339,6 +483,10 @@ class RiemannianImageEditorMainMenu:
                 print("Ошибка загрузки файла цветов:", e)
     
     def load_metric_bmp(self):
+        """Загружает файл с метрикой изображения.
+        
+        Проверяет, что метрика является римановой (положительно определенной).
+        """
         file_path = filedialog.askopenfilename(filetypes=[("BMP files", "*.bmp")])
         if file_path:
             self.current_metric_file_path = file_path
@@ -351,7 +499,7 @@ class RiemannianImageEditorMainMenu:
                     for y in range(self.current_metric_array.shape[1]):
                         for x in range(self.current_metric_array.shape[0]):
                             if not (self.current_metric_array[y, x][0] > 0 and (self.current_metric_array[y, x][0] * self.current_metric_array[y, x][2] > self.current_metric_array[y, x][1] ** 2)):
-                                is_riemannian = false
+                                is_riemannian = False
                                 break
                     if is_riemannian:
                         self.current_metric_array /= 255.0
@@ -366,6 +514,7 @@ class RiemannianImageEditorMainMenu:
                 print("Ошибка загрузки файла метрики:", e)
     
     def create_new_bmps(self):
+        """Создает новые файлы цветов и метрики заданного размера."""
         try:
             size = tk.simpledialog.askinteger("Размер", "Введите размер:", parent=self.root, minvalue=16, maxvalue=128)
             if not size:
@@ -397,14 +546,15 @@ class RiemannianImageEditorMainMenu:
         except Exception as e:
             print("Ошибка создания:", e)
 
-    
     def check_buttons_state(self):
+        """Проверяет состояние кнопок в зависимости от загруженных данных."""
         if self.current_color_array is not None and self.current_metric_array is not None:
             self.btn_open_editor.config(state=tk.NORMAL)
         else:
             self.btn_open_editor.config(state=tk.DISABLED)
     
     def open_editor(self):
+        """Открывает редактор с текущими загруженными данными."""
         if self.current_color_array is None or self.current_metric_array is None:
             return
         
